@@ -1,0 +1,75 @@
+
+trap _exit EXIT # cleanup
+
+_plan_set=0    _no_plan=0     _skip_all=0
+_expected=0    _executed=0    _failed_tests=0
+_test_died=0   TODO=
+
+plan_tests()    { (( _plan_set != 0 )) && _die "TAP: planned twice" ; _print_plan ${1:-0} ; _expected=${1:-0} ; _plan_set=1 ; }
+plan_no_plan()  { (( _plan_set != 0 )) && _die "TAP: planned twice." ; _plan_set=1 ; _no_plan=1 ; }
+plan_skip_all() { _print_plan 0 "Skip1" ; _skip_all=1 ; _plan_set=1 ; _exit 0 ; }
+skip()          { (( $1 )) && return ; for (( i=0 ; i<${3:-1} ; i++ )) ; do $(( _executed++ )) ; echo "ok $_executed # skip: $2" ; done ; }
+
+ok()
+{
+local result=${1:?} ; local name=${2:-''}
+
+(( _plan_set == 0 )) && _die "TAP: missing plan."
+(( _executed++ ))
+
+[[ -n "$name" ]]  && [[ "$name" =~ ^[0-9]+$ ]] && diag "TAP: test '$name', please use numbers for your test names."
+(( result != 0 )) && { echo -n "not ok $_executed" ; (( _failed_tests++ )) ; true ; } || echo -n "ok $_executed"
+[[ -n "$name" ]]  && { local ename=${name//\#/\\#} ; echo -n " - $ename" ; }
+[[ -n "$TODO" ]]  && { echo -n "\# TODO" ; (( result != 0 &&  _failed_tests-- )) ; }
+echo
+
+return $result
+}
+
+okx()
+{
+local command ; for c in "$@" ; do command+="${c:-''} " ; done
+okx_output="$("$@" 2>&1)" ;
+
+ok ${PIPESTATUS[0]} "$command" || { diag "Output of '$command':" ; diag_lines "$out_line" ; }
+}
+
+pass()   { ok 0 "$1" ; }
+fail()   { ok 1 "$1" ; }
+is()     { [[ "$1" == "$2" ]] ; ok $? "$3"             || { diag "     got: '$1'" ; diag "expected: '$2'" ; false ; } ; }
+isnt()   { [[ "$1" == "$2" ]] ; ok $(( $? != 0 )) "$3" || { diag "     got unexpected: '$1'" ; false ; } ; }
+like()   { [[ "$1" =~ "$2" ]] ; ok $? "$3"             || { diag "     got: '$1'"  ; diag "doesn't match" ; diag "    expected: '$2'" ; false ; } ; }
+unlike() { [[ "$1" =~ "$2" ]] ; ok $(( $? != 0 )) "$3" || { diag "    '$1'"  ; diag "matches" ;       diag "    '$2'" ; false ; } ; }
+BAIL()   { echo "TAP: bail out $1" >&2 ; _exit 255 ; }
+
+diag()        { echo -e "\t${2:-⏐ }${1:-no output}" ; }
+diag_lines()  { while read out_line ; do diag "${out_line:-<nl>}" ; done <<<"$1" ; }
+
+_print_plan() { [[ -n "$2" ]] && echo "1..$1 # $2" || echo "1..$1" ; }
+_die()        { echo "${1:-'<unspecified error>'}" >&2 ; _test_died=1 ; _exit 255 ; }
+
+_exit()
+{
+trap - EXIT
+local rc=${1:-''}
+
+[[ -z "$rc" ]] && 
+	{
+	(( rc = _failed_tests + ( _expected - _executed )))
+	(( _no_plan != 0 || _plan_set == 0 )) && (( rc = _failed_tests ))
+	(( _expected < _executed )) &&           (( rc = _executed - _expected  )) 
+	}
+
+(( _plan_set == 0 ))  && { echo "TAP: plan not set." 1>&2 ; exit 1 ; }
+(( _test_died != 0 )) && { echo "TAP: test died, tests: $_executed." 1>&2 ; exit 1 ; }
+
+(( _skip_all == 0 && _no_plan != 0 )) && _print_plan $_executed
+
+(( _no_plan == 0 && _expected < _executed )) && echo "TAP: planned: $_expected, ran: $_executed (+$extra)."
+(( _no_plan == 0 && _expected > _executed )) && echo "TAP: planned: $_expected, ran: $_executed."
+(( _failed_tests > 0 )) &&                      echo "TAP: failed: $_failed_tests/$_executed." 
+exit $rc
+}
+
+# vim: set ft=bash:
+
